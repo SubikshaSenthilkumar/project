@@ -1,0 +1,209 @@
+// index.html
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mobile Object Detection</title>
+    <link rel="manifest" href="manifest.json">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            background-color: #f0f0f0;
+        }
+        .container {
+            width: 100%;
+            max-width: 500px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        #video-container {
+            position: relative;
+            width: 100%;
+            margin-bottom: 20px;
+        }
+        #video {
+            width: 100%;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        #caption-box {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            width: 90%;
+            text-align: center;
+        }
+        #caption {
+            font-size: 18px;
+            margin-bottom: 10px;
+        }
+        button {
+            background-color: #4285f4;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 15px;
+        }
+        button:hover {
+            background-color: #3367d6;
+        }
+        .status {
+            color: #666;
+            font-style: italic;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Mobile Object Detection</h1>
+        <div id="video-container">
+            <video id="video" autoplay playsinline></video>
+        </div>
+        <div id="caption-box">
+            <div id="caption">Point your camera at objects to detect them</div>
+            <button id="speak-button">Speak Caption</button>
+        </div>
+        <p class="status" id="status">Processing...</p>
+        <button id="start-button">Start Camera</button>
+    </div>
+
+    <!-- TensorFlow.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+
+    <script>
+        // Service Worker Registration
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('service-worker.js')
+                    .then(reg => console.log('Service Worker registered'))
+                    .catch(err => console.log('Service Worker registration failed', err));
+            });
+        }
+
+        // Variables
+        let video;
+        let model;
+        let lastCaptionTime = 0;
+        let currentCaption = "Point your camera at objects to detect them";
+        let captionCooldown = 2000; // milliseconds between detections
+        const captionEl = document.getElementById('caption');
+        const statusEl = document.getElementById('status');
+        const startButton = document.getElementById('start-button');
+        const speakButton = document.getElementById('speak-button');
+
+        // Initialize
+        async function init() {
+            try {
+                video = document.getElementById('video');
+                statusEl.textContent = "Loading object detection model...";
+                
+                // Load the COCO-SSD model
+                model = await cocoSsd.load();
+                
+                statusEl.textContent = "Model loaded successfully!";
+                startButton.disabled = false;
+            } catch (error) {
+                console.error("Error initializing:", error);
+                statusEl.textContent = "Error: " + error.message;
+            }
+        }
+
+        // Start camera
+        startButton.addEventListener('click', async () => {
+            try {
+                startButton.disabled = true;
+                statusEl.textContent = "Accessing camera...";
+                
+                // Request camera access
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'environment' }, // Use rear camera if available
+                    audio: false
+                });
+                
+                video.srcObject = stream;
+                statusEl.textContent = "Camera active - detecting objects";
+                
+                // Start detection loop
+                detectObjects();
+            } catch (error) {
+                console.error("Error accessing camera:", error);
+                statusEl.textContent = "Camera error: " + error.message;
+                startButton.disabled = false;
+            }
+        });
+
+        // Detect objects
+        async function detectObjects() {
+            if (!model || !video.videoWidth) {
+                requestAnimationFrame(detectObjects);
+                return;
+            }
+
+            const currentTime = Date.now();
+            
+            // Only detect objects every few seconds
+            if (currentTime - lastCaptionTime > captionCooldown) {
+                try {
+                    const predictions = await model.detect(video);
+                    
+                    if (predictions.length > 0) {
+                        // Sort by confidence
+                        predictions.sort((a, b) => b.score - a.score);
+                        
+                        // Get top 3 predictions
+                        const topPredictions = predictions.slice(0, 3);
+                        
+                        // Format caption
+                        if (topPredictions.length === 1) {
+                            currentCaption = `I see a ${topPredictions[0].class}`;
+                        } else {
+                            const classes = topPredictions.map(p => p.class);
+                            const lastClass = classes.pop();
+                            currentCaption = `I see ${classes.join(', ')} and ${lastClass}`;
+                        }
+                        
+                        // Update UI
+                        captionEl.textContent = currentCaption;
+                        lastCaptionTime = currentTime;
+                    }
+                } catch (error) {
+                    console.error("Detection error:", error);
+                }
+            }
+            
+            // Continue detection loop
+            requestAnimationFrame(detectObjects);
+        }
+
+        // Text-to-speech function
+        speakButton.addEventListener('click', () => {
+            if ('speechSynthesis' in window) {
+                const utterance = new SpeechSynthesisUtterance(currentCaption);
+                window.speechSynthesis.speak(utterance);
+            } else {
+                alert("Sorry, your browser doesn't support text-to-speech!");
+            }
+        });
+
+        // Initialize on page load
+        window.addEventListener('load', init);
+    </script>
+</body>
+</html>
